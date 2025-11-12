@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 # =========================================================
-# TASK DASHBOARD - STREAMLIT VERSION (Với tính năng lưu dữ liệu)
+# TASK DASHBOARD - AUTO SAVE/LOAD VERSION
 # =========================================================
 
 st.set_page_config(
@@ -61,12 +61,13 @@ st.markdown("""
         font-weight: bold;
         color: #004085;
     }
-    .save-indicator {
-        background-color: #d1ecf1;
-        border-left: 4px solid #0c5460;
+    .auto-load-indicator {
+        background-color: #d1f2eb;
+        border-left: 4px solid #1abc9c;
         padding: 10px;
         margin: 10px 0;
         border-radius: 4px;
+        color: #0e6251;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -76,38 +77,46 @@ DATA_DIR = Path("saved_data")
 DATA_DIR.mkdir(exist_ok=True)
 SAVED_DATA_FILE = DATA_DIR / "dashboard_data.pkl"
 
-# === HÀM: Lưu dữ liệu ===
+# === HÀM: Lưu dữ liệu (Auto) ===
 def save_dashboard_data(df, images, upload_time, uploaded_filename):
-    """Lưu dữ liệu dashboard vào file"""
+    """Tự động lưu dữ liệu dashboard vào file"""
     data = {
         "df": df,
         "images": images,
         "upload_time": upload_time,
         "uploaded_filename": uploaded_filename
     }
-    with open(SAVED_DATA_FILE, 'wb') as f:
-        pickle.dump(data, f)
-    return True
+    try:
+        with open(SAVED_DATA_FILE, 'wb') as f:
+            pickle.dump(data, f)
+        return True
+    except Exception as e:
+        st.error(f"❌ Lỗi khi lưu dữ liệu: {str(e)}")
+        return False
 
-# === HÀM: Load dữ liệu đã lưu ===
+# === HÀM: Load dữ liệu đã lưu (Auto) ===
 def load_saved_data():
-    """Load dữ liệu đã lưu từ file"""
+    """Tự động load dữ liệu đã lưu từ file"""
     if SAVED_DATA_FILE.exists():
         try:
             with open(SAVED_DATA_FILE, 'rb') as f:
                 data = pickle.load(f)
             return data
         except Exception as e:
-            st.error(f"Lỗi khi load dữ liệu đã lưu: {str(e)}")
+            st.error(f"❌ Lỗi khi load dữ liệu: {str(e)}")
             return None
     return None
 
-# === HÀM: Xóa dữ liệu đã lưu ===
+# === HÀM: Xóa dữ liệu đã lưu (Auto) ===
 def clear_saved_data():
-    """Xóa dữ liệu đã lưu"""
+    """Tự động xóa dữ liệu đã lưu khi upload file mới"""
     if SAVED_DATA_FILE.exists():
-        os.remove(SAVED_DATA_FILE)
-        return True
+        try:
+            os.remove(SAVED_DATA_FILE)
+            return True
+        except Exception as e:
+            st.error(f"❌ Lỗi khi xóa dữ liệu: {str(e)}")
+            return False
     return False
 
 # === HÀM: Lấy các dòng visible từ Excel ===
@@ -124,17 +133,15 @@ def get_visible_rows(ws, header_row=3):
     """
     visible_rows = []
     
-    # Kiểm tra từng dòng xem có bị ẩn không
     for row_idx in range(header_row + 1, ws.max_row + 1):
         row_dimension = ws.row_dimensions[row_idx]
         
-        # Nếu dòng không bị ẩn (hidden=False hoặc không có thuộc tính hidden)
         if not row_dimension.hidden:
             visible_rows.append(row_idx)
     
     return visible_rows
 
-# === HÀM: Load chỉ dữ liệu visible ===
+# === HÀM: Load và xử lý dữ liệu ===
 def load_and_process_data(uploaded_file):
     """Load và xử lý CHỈ dữ liệu VISIBLE từ Excel file"""
     today = pd.Timestamp.now().normalize()
@@ -152,7 +159,6 @@ def load_and_process_data(uploaded_file):
         cell = image.anchor._from
         row_num = cell.row + 1
         
-        # Chỉ lưu hình ảnh từ dòng visible
         if row_num in visible_row_numbers:
             cell_coord = f"{openpyxl.utils.get_column_letter(cell.col + 1)}{row_num}"
             img_bytes = image.ref.getvalue() if hasattr(image.ref, 'getvalue') else image.ref
@@ -163,7 +169,6 @@ def load_and_process_data(uploaded_file):
     df_full.columns = df_full.columns.str.strip()
     
     # Lọc CHỈ GIỮ các dòng visible
-    # visible_row_numbers bắt đầu từ 4 (dòng 4 trong Excel = index 0 trong DataFrame)
     visible_indices = [row_num - 4 for row_num in visible_row_numbers]
     df = df_full.iloc[visible_indices].copy()
     df.reset_index(drop=True, inplace=True)
@@ -244,86 +249,70 @@ if 'upload_time' not in st.session_state:
     st.session_state.upload_time = None
 if 'uploaded_filename' not in st.session_state:
     st.session_state.uploaded_filename = None
+if 'auto_loaded' not in st.session_state:
+    st.session_state.auto_loaded = False
+
+# === AUTO-LOAD dữ liệu khi mở web lần đầu ===
+if not st.session_state.auto_loaded:
+    saved_data = load_saved_data()
+    if saved_data:
+        st.session_state.df = saved_data["df"]
+        st.session_state.images = saved_data["images"]
+        st.session_state.upload_time = saved_data["upload_time"]
+        st.session_state.uploaded_filename = saved_data["uploaded_filename"]
+        st.session_state.data_loaded = True
+    st.session_state.auto_loaded = True
 
 # === Sidebar - Upload file ===
 with st.sidebar:
     st.header("⚙️ Cấu hình")
     
-    # Kiểm tra có dữ liệu đã lưu không
-    saved_data = load_saved_data()
-    
-    if saved_data:
-        st.markdown('<div class="save-indicator">📊 <b>Có dữ liệu đã lưu</b><br/>'
-                   f'File: {saved_data["uploaded_filename"]}<br/>'
-                   f'Thời gian: {saved_data["upload_time"].strftime("%Y-%m-%d %H:%M:%S")}'
-                   '</div>', unsafe_allow_html=True)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("📂 Load dữ liệu đã lưu", use_container_width=True):
-                st.session_state.df = saved_data["df"]
-                st.session_state.images = saved_data["images"]
-                st.session_state.upload_time = saved_data["upload_time"]
-                st.session_state.uploaded_filename = saved_data["uploaded_filename"]
-                st.session_state.data_loaded = True
-                st.rerun()
-        
-        with col2:
-            if st.button("🗑️ Xóa dữ liệu", use_container_width=True):
-                clear_saved_data()
-                st.session_state.df = None
-                st.session_state.images = None
-                st.session_state.data_loaded = False
-                st.success("✅ Đã xóa dữ liệu đã lưu")
-                st.rerun()
+    # Hiển thị thông tin dữ liệu hiện tại
+    if st.session_state.data_loaded and st.session_state.uploaded_filename:
+        st.markdown(
+            '<div class="auto-load-indicator">'
+            '🔄 <b>Dữ liệu đang hiển thị</b><br/>'
+            f'📁 File: {st.session_state.uploaded_filename}<br/>'
+            f'🕒 Thời gian: {st.session_state.upload_time.strftime("%Y-%m-%d %H:%M:%S")}'
+            '</div>', 
+            unsafe_allow_html=True
+        )
     
     st.markdown("---")
     
     uploaded_file = st.file_uploader(
-        "Upload Excel File",
+        "📤 Upload Excel File mới",
         type=["xlsx", "xls"],
         help="Upload file Excel với header ở dòng 3"
     )
     
     if uploaded_file is not None:
+        # AUTO-XÓA dữ liệu cũ
+        if st.session_state.data_loaded:
+            clear_saved_data()
+            st.info("🗑️ Đã xóa dữ liệu cũ tự động")
+        
         st.success("✅ File đã được tải lên!")
         
-        # Load dữ liệu
+        # Load và xử lý dữ liệu
         try:
-            df, images, ws, visible_count, total_count = load_and_process_data(uploaded_file)
-            
-            # Lưu vào session state
-            st.session_state.df = df
-            st.session_state.images = images
-            st.session_state.upload_time = datetime.now()
-            st.session_state.uploaded_filename = uploaded_file.name
-            st.session_state.data_loaded = True
-            
-            # Nút lưu dữ liệu
-            st.markdown("---")
-            if st.button("💾 Lưu dữ liệu này", use_container_width=True, type="primary"):
+            with st.spinner("⏳ Đang xử lý file..."):
+                df, images, ws, visible_count, total_count = load_and_process_data(uploaded_file)
+                
+                # Lưu vào session state
+                st.session_state.df = df
+                st.session_state.images = images
+                st.session_state.upload_time = datetime.now()
+                st.session_state.uploaded_filename = uploaded_file.name
+                st.session_state.data_loaded = True
+                
+                # AUTO-SAVE dữ liệu
                 if save_dashboard_data(df, images, st.session_state.upload_time, uploaded_file.name):
-                    st.success("✅ Đã lưu dữ liệu thành công!")
-                    st.info("💡 Người khác giờ có thể xem dữ liệu này bằng cách nhấn 'Load dữ liệu đã lưu'")
+                    st.success("💾 Đã lưu dữ liệu tự động!")
                 else:
-                    st.error("❌ Lỗi khi lưu dữ liệu")
-            
-            st.markdown("---")
-            st.subheader("🔍 Lọc dữ liệu")
-            
-            # Filter theo STATUS
-            status_filter = st.multiselect(
-                "Chọn STATUS",
-                options=["All"] + sorted(df["STATUS"].unique().tolist()),
-                default=["All"]
-            )
-            
-            # Filter theo ngày
-            date_range = st.date_input(
-                "Lọc theo START DATE",
-                value=None,
-                help="Để trống để hiển thị tất cả"
-            )
+                    st.warning("⚠️ Không thể lưu dữ liệu tự động")
+                
+                st.rerun()
             
         except Exception as e:
             st.error(f"❌ Lỗi khi đọc file: {str(e)}")
@@ -331,10 +320,9 @@ with st.sidebar:
             st.code(traceback.format_exc())
             st.stop()
     
-    elif st.session_state.data_loaded:
-        # Sử dụng dữ liệu đã load từ session state
+    # Sidebar filters
+    if st.session_state.data_loaded:
         df = st.session_state.df
-        images = st.session_state.images
         
         st.markdown("---")
         st.subheader("🔍 Lọc dữ liệu")
@@ -346,14 +334,14 @@ with st.sidebar:
             default=["All"]
         )
         
-        # Filter theo ngày
-        date_range = st.date_input(
-            "Lọc theo START DATE",
-            value=None,
-            help="Để trống để hiển thị tất cả"
+        # Filter theo TASK (thay vì START DATE)
+        task_search = st.text_input(
+            "🔎 Tìm kiếm TASK",
+            placeholder="Nhập từ khóa để tìm task...",
+            help="Tìm kiếm theo tên task (không phân biệt chữ hoa/thường)"
         )
     else:
-        st.info("👆 Vui lòng upload file Excel hoặc load dữ liệu đã lưu")
+        st.info("👆 Vui lòng upload file Excel để bắt đầu")
         st.stop()
 
 # === Main content ===
@@ -364,16 +352,15 @@ if st.session_state.data_loaded:
     # Áp dụng filter
     df_filtered = df.copy()
     
+    # Filter theo STATUS
     if "All" not in status_filter and len(status_filter) > 0:
         df_filtered = df_filtered[df_filtered["STATUS"].isin(status_filter)]
     
-    if date_range:
-        if isinstance(date_range, tuple) and len(date_range) == 2:
-            start_date, end_date = date_range
-            df_filtered = df_filtered[
-                (df_filtered["START DATE"] >= pd.Timestamp(start_date)) &
-                (df_filtered["START DATE"] <= pd.Timestamp(end_date))
-            ]
+    # Filter theo TASK (text search)
+    if task_search:
+        df_filtered = df_filtered[
+            df_filtered["TASK"].astype(str).str.contains(task_search, case=False, na=False)
+        ]
     
     # === Hiển thị thống kê ===
     with st.sidebar:
@@ -439,7 +426,6 @@ if st.session_state.data_loaded:
                 
                 df_full = pd.DataFrame(full_data)
                 
-                # Tính max count để set margin phù hợp
                 max_count = df_full["count"].max()
                 
                 fig_bar = go.Figure()
@@ -466,7 +452,7 @@ if st.session_state.data_loaded:
                     barmode='group',
                     xaxis=dict(tickformat="%Y-%m", type='category'),
                     yaxis=dict(
-                        range=[0, max_count * 1.15]  # Thêm 15% khoảng trống phía trên
+                        range=[0, max_count * 1.15]
                     ),
                     hovermode='x unified',
                     height=400,
@@ -474,11 +460,11 @@ if st.session_state.data_loaded:
                     legend=dict(
                         orientation="h", 
                         yanchor="bottom", 
-                        y=1.1,  # Đẩy legend cao hơn
+                        y=1.1,
                         xanchor="right", 
                         x=1
                     ),
-                    margin=dict(t=80, b=40, l=40, r=40)  # Tăng margin trên để chứa legend
+                    margin=dict(t=80, b=40, l=40, r=40)
                 )
                 st.plotly_chart(fig_bar, use_container_width=True)
             else:
@@ -561,9 +547,9 @@ if st.session_state.data_loaded:
     
     # Footer
     st.markdown("---")
-    footer_text = f"Dashboard cập nhật lần cuối: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    footer_text = f"🔄 Dashboard cập nhật: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     if st.session_state.upload_time:
-        footer_text += f" | Dữ liệu từ: {st.session_state.uploaded_filename} ({st.session_state.upload_time.strftime('%Y-%m-%d %H:%M:%S')})"
+        footer_text += f" | 📁 Dữ liệu: {st.session_state.uploaded_filename} ({st.session_state.upload_time.strftime('%Y-%m-%d %H:%M:%S')})"
     
     st.markdown(
         f"<div style='text-align: center; color: gray; padding: 10px;'>"
