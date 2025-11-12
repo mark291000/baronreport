@@ -273,7 +273,7 @@ with st.sidebar:
             '<div class="auto-load-indicator">'
             '🔄 <b>Dữ liệu đang hiển thị</b><br/>'
             f'📁 File: {st.session_state.uploaded_filename}<br/>'
-            f'🕒 Thời gian: {st.session_state.upload_time.strftime("%Y-%m-%d %H:%M:%S")}'
+            f'🕒 Thời gian: {st.session_state.upload_time.strftime("%Y-%m-%d")}'
             '</div>', 
             unsafe_allow_html=True
         )
@@ -557,3 +557,4 @@ if st.session_state.data_loaded:
         f"</div>",
         unsafe_allow_html=True
     )
+
