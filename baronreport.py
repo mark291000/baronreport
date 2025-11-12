@@ -1,14 +1,16 @@
 import streamlit as st
 import pandas as pd
 import openpyxl
-from openpyxl.worksheet.filters import AutoFilter
 import base64
 from datetime import datetime
 import plotly.graph_objects as go
 import plotly.express as px
+import pickle
+import os
+from pathlib import Path
 
 # =========================================================
-# TASK DASHBOARD - STREAMLIT VERSION (Chỉ đọc dòng visible)
+# TASK DASHBOARD - STREAMLIT VERSION (Với tính năng lưu dữ liệu)
 # =========================================================
 
 st.set_page_config(
@@ -59,8 +61,54 @@ st.markdown("""
         font-weight: bold;
         color: #004085;
     }
+    .save-indicator {
+        background-color: #d1ecf1;
+        border-left: 4px solid #0c5460;
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 4px;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+# === Đường dẫn lưu dữ liệu ===
+DATA_DIR = Path("saved_data")
+DATA_DIR.mkdir(exist_ok=True)
+SAVED_DATA_FILE = DATA_DIR / "dashboard_data.pkl"
+
+# === HÀM: Lưu dữ liệu ===
+def save_dashboard_data(df, images, upload_time, uploaded_filename):
+    """Lưu dữ liệu dashboard vào file"""
+    data = {
+        "df": df,
+        "images": images,
+        "upload_time": upload_time,
+        "uploaded_filename": uploaded_filename
+    }
+    with open(SAVED_DATA_FILE, 'wb') as f:
+        pickle.dump(data, f)
+    return True
+
+# === HÀM: Load dữ liệu đã lưu ===
+def load_saved_data():
+    """Load dữ liệu đã lưu từ file"""
+    if SAVED_DATA_FILE.exists():
+        try:
+            with open(SAVED_DATA_FILE, 'rb') as f:
+                data = pickle.load(f)
+            return data
+        except Exception as e:
+            st.error(f"Lỗi khi load dữ liệu đã lưu: {str(e)}")
+            return None
+    return None
+
+# === HÀM: Xóa dữ liệu đã lưu ===
+def clear_saved_data():
+    """Xóa dữ liệu đã lưu"""
+    if SAVED_DATA_FILE.exists():
+        os.remove(SAVED_DATA_FILE)
+        return True
+    return False
 
 # === HÀM: Lấy các dòng visible từ Excel ===
 def get_visible_rows(ws, header_row=3):
@@ -87,7 +135,6 @@ def get_visible_rows(ws, header_row=3):
     return visible_rows
 
 # === HÀM: Load chỉ dữ liệu visible ===
-@st.cache_data
 def load_and_process_data(uploaded_file):
     """Load và xử lý CHỈ dữ liệu VISIBLE từ Excel file"""
     today = pd.Timestamp.now().normalize()
@@ -186,9 +233,52 @@ def create_status_badge(status):
 st.title("📋 Task Dashboard")
 st.markdown("---")
 
+# === Khởi tạo session state ===
+if 'data_loaded' not in st.session_state:
+    st.session_state.data_loaded = False
+if 'df' not in st.session_state:
+    st.session_state.df = None
+if 'images' not in st.session_state:
+    st.session_state.images = None
+if 'upload_time' not in st.session_state:
+    st.session_state.upload_time = None
+if 'uploaded_filename' not in st.session_state:
+    st.session_state.uploaded_filename = None
+
 # === Sidebar - Upload file ===
 with st.sidebar:
     st.header("⚙️ Cấu hình")
+    
+    # Kiểm tra có dữ liệu đã lưu không
+    saved_data = load_saved_data()
+    
+    if saved_data:
+        st.markdown('<div class="save-indicator">📊 <b>Có dữ liệu đã lưu</b><br/>'
+                   f'File: {saved_data["uploaded_filename"]}<br/>'
+                   f'Thời gian: {saved_data["upload_time"].strftime("%Y-%m-%d %H:%M:%S")}'
+                   '</div>', unsafe_allow_html=True)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📂 Load dữ liệu đã lưu", use_container_width=True):
+                st.session_state.df = saved_data["df"]
+                st.session_state.images = saved_data["images"]
+                st.session_state.upload_time = saved_data["upload_time"]
+                st.session_state.uploaded_filename = saved_data["uploaded_filename"]
+                st.session_state.data_loaded = True
+                st.rerun()
+        
+        with col2:
+            if st.button("🗑️ Xóa dữ liệu", use_container_width=True):
+                clear_saved_data()
+                st.session_state.df = None
+                st.session_state.images = None
+                st.session_state.data_loaded = False
+                st.success("✅ Đã xóa dữ liệu đã lưu")
+                st.rerun()
+    
+    st.markdown("---")
+    
     uploaded_file = st.file_uploader(
         "Upload Excel File",
         type=["xlsx", "xls"],
@@ -201,6 +291,22 @@ with st.sidebar:
         # Load dữ liệu
         try:
             df, images, ws, visible_count, total_count = load_and_process_data(uploaded_file)
+            
+            # Lưu vào session state
+            st.session_state.df = df
+            st.session_state.images = images
+            st.session_state.upload_time = datetime.now()
+            st.session_state.uploaded_filename = uploaded_file.name
+            st.session_state.data_loaded = True
+            
+            # Nút lưu dữ liệu
+            st.markdown("---")
+            if st.button("💾 Lưu dữ liệu này", use_container_width=True, type="primary"):
+                if save_dashboard_data(df, images, st.session_state.upload_time, uploaded_file.name):
+                    st.success("✅ Đã lưu dữ liệu thành công!")
+                    st.info("💡 Người khác giờ có thể xem dữ liệu này bằng cách nhấn 'Load dữ liệu đã lưu'")
+                else:
+                    st.error("❌ Lỗi khi lưu dữ liệu")
             
             st.markdown("---")
             st.subheader("🔍 Lọc dữ liệu")
@@ -224,12 +330,36 @@ with st.sidebar:
             import traceback
             st.code(traceback.format_exc())
             st.stop()
+    
+    elif st.session_state.data_loaded:
+        # Sử dụng dữ liệu đã load từ session state
+        df = st.session_state.df
+        images = st.session_state.images
+        
+        st.markdown("---")
+        st.subheader("🔍 Lọc dữ liệu")
+        
+        # Filter theo STATUS
+        status_filter = st.multiselect(
+            "Chọn STATUS",
+            options=["All"] + sorted(df["STATUS"].unique().tolist()),
+            default=["All"]
+        )
+        
+        # Filter theo ngày
+        date_range = st.date_input(
+            "Lọc theo START DATE",
+            value=None,
+            help="Để trống để hiển thị tất cả"
+        )
     else:
-        st.info("👆 Vui lòng upload file Excel để bắt đầu")
+        st.info("👆 Vui lòng upload file Excel hoặc load dữ liệu đã lưu")
         st.stop()
 
 # === Main content ===
-if uploaded_file is not None:
+if st.session_state.data_loaded:
+    df = st.session_state.df
+    images = st.session_state.images
     
     # Áp dụng filter
     df_filtered = df.copy()
@@ -431,9 +561,13 @@ if uploaded_file is not None:
     
     # Footer
     st.markdown("---")
+    footer_text = f"Dashboard cập nhật lần cuối: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    if st.session_state.upload_time:
+        footer_text += f" | Dữ liệu từ: {st.session_state.uploaded_filename} ({st.session_state.upload_time.strftime('%Y-%m-%d %H:%M:%S')})"
+    
     st.markdown(
         f"<div style='text-align: center; color: gray; padding: 10px;'>"
-        f"Dashboard cập nhật lần cuối: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        f"{footer_text}"
         f"</div>",
         unsafe_allow_html=True
     )
