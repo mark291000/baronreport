@@ -166,18 +166,6 @@ with st.sidebar:
             df, images, ws = load_and_process_data(uploaded_file)
             
             st.markdown("---")
-            st.subheader("📊 Thống kê tổng quan")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Tổng số task", len(df))
-                st.metric("Task có hình ảnh", len(df[df["PICTURE_BASE64"] != ""]))
-            
-            with col2:
-                st.metric("Completed", len(df[df["STATUS"] == "Completed"]))
-                st.metric("Delay", len(df[df["STATUS"] == "Delay"]))
-            
-            st.markdown("---")
             st.subheader("🔍 Lọc dữ liệu")
             
             # Filter theo STATUS
@@ -218,15 +206,37 @@ if uploaded_file is not None:
                 (df_filtered["START DATE"] <= pd.Timestamp(end_date))
             ]
     
+    # === Hiển thị thống kê CHỈ cho dữ liệu đã filter ===
+    with st.sidebar:
+        st.markdown("---")
+        st.subheader("📊 Thống kê (Đang hiển thị)")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Tổng số task", len(df_filtered))
+            st.metric("Task có hình ảnh", len(df_filtered[df_filtered["PICTURE_BASE64"] != ""]))
+        
+        with col2:
+            st.metric("Completed", len(df_filtered[df_filtered["STATUS"] == "Completed"]))
+            st.metric("Delay", len(df_filtered[df_filtered["STATUS"] == "Delay"]))
+        
+        # Thêm thống kê chi tiết
+        st.markdown("**Phân bố STATUS:**")
+        for status in ["Completed", "Working", "New Task", "Delay"]:
+            count = len(df_filtered[df_filtered["STATUS"] == status])
+            if count > 0:
+                st.write(f"• {status}: {count}")
+    
     # === Tab layout ===
     tab1, tab2, tab3 = st.tabs(["📊 Biểu đồ", "📋 Bảng dữ liệu", "🖼️ Hình ảnh"])
     
-    # === TAB 1: Biểu đồ ===
+    # === TAB 1: Biểu đồ (CHỈ dữ liệu đã filter) ===
     with tab1:
         col1, col2 = st.columns(2)
         
         with col1:
             st.subheader("Tỷ lệ STATUS các Task")
+            st.caption(f"Hiển thị {len(df_filtered)} tasks")
             status_counts = df_filtered["STATUS"].value_counts()
             if not status_counts.empty:
                 fig_pie = px.pie(
@@ -247,6 +257,7 @@ if uploaded_file is not None:
         
         with col2:
             st.subheader("Phân bố theo tháng")
+            st.caption(f"Hiển thị {len(df_filtered)} tasks")
             df_with_dates = df_filtered[df_filtered["START DATE"].notna()].copy()
             if not df_with_dates.empty:
                 df_with_dates["month"] = df_with_dates["START DATE"].dt.strftime("%Y-%m")
@@ -300,60 +311,63 @@ if uploaded_file is not None:
             else:
                 st.info("Không có dữ liệu ngày tháng để hiển thị")
     
-    # === TAB 2: Bảng dữ liệu ===
+    # === TAB 2: Bảng dữ liệu (CHỈ dữ liệu đã filter) ===
     with tab2:
-        st.subheader(f"Danh sách Task ({len(df_filtered)} tasks)")
+        st.subheader(f"Danh sách Task ({len(df_filtered)} tasks đang hiển thị)")
         
-        # Tạo DataFrame hiển thị
-        df_display = df_filtered.copy()
-        df_display["START DATE"] = df_display["START DATE"].dt.strftime("%m/%d/%Y")
-        df_display["DUE DATE"] = df_display["DUE DATE"].dt.strftime("%m/%d/%Y")
-        df_display = df_display.fillna("")
-        
-        # Chọn các cột hiển thị
-        display_cols = ["TASK", "Requester", "START DATE", "DUE DATE", "CONFIRM FROM BARON", "STATUS"]
-        df_show = df_display[display_cols].copy()
-        
-        # Tạo HTML table với status có màu
-        html_table = "<table style='width:100%; border-collapse: collapse;'>"
-        html_table += "<thead><tr style='background-color: #4CAF50; color: white;'>"
-        for col in display_cols:
-            html_table += f"<th style='padding: 10px; border: 1px solid #ddd;'>{col}</th>"
-        html_table += "</tr></thead><tbody>"
-        
-        for idx, row in df_show.iterrows():
-            html_table += "<tr>"
+        if len(df_filtered) == 0:
+            st.warning("⚠️ Không có task nào khớp với bộ lọc hiện tại")
+        else:
+            # Tạo DataFrame hiển thị
+            df_display = df_filtered.copy()
+            df_display["START DATE"] = df_display["START DATE"].dt.strftime("%m/%d/%Y")
+            df_display["DUE DATE"] = df_display["DUE DATE"].dt.strftime("%m/%d/%Y")
+            df_display = df_display.fillna("")
+            
+            # Chọn các cột hiển thị
+            display_cols = ["TASK", "Requester", "START DATE", "DUE DATE", "CONFIRM FROM BARON", "STATUS"]
+            df_show = df_display[display_cols].copy()
+            
+            # Tạo HTML table với status có màu
+            html_table = "<table style='width:100%; border-collapse: collapse;'>"
+            html_table += "<thead><tr style='background-color: #4CAF50; color: white;'>"
             for col in display_cols:
-                value = str(row[col]) if row[col] != "" else ""
-                if col == "STATUS":
-                    value = create_status_badge(value)
-                    html_table += f"<td style='padding: 8px; border: 1px solid #ddd; text-align: center;'>{value}</td>"
-                else:
-                    html_table += f"<td style='padding: 8px; border: 1px solid #ddd;'>{value}</td>"
-            html_table += "</tr>"
-        
-        html_table += "</tbody></table>"
-        st.markdown(html_table, unsafe_allow_html=True)
-        
-        # Download button
-        st.markdown("---")
-        csv = df_show.to_csv(index=False).encode('utf-8-sig')
-        st.download_button(
-            label="📥 Download CSV",
-            data=csv,
-            file_name=f"task_dashboard_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv",
-        )
+                html_table += f"<th style='padding: 10px; border: 1px solid #ddd;'>{col}</th>"
+            html_table += "</tr></thead><tbody>"
+            
+            for idx, row in df_show.iterrows():
+                html_table += "<tr>"
+                for col in display_cols:
+                    value = str(row[col]) if row[col] != "" else ""
+                    if col == "STATUS":
+                        value = create_status_badge(value)
+                        html_table += f"<td style='padding: 8px; border: 1px solid #ddd; text-align: center;'>{value}</td>"
+                    else:
+                        html_table += f"<td style='padding: 8px; border: 1px solid #ddd;'>{value}</td>"
+                html_table += "</tr>"
+            
+            html_table += "</tbody></table>"
+            st.markdown(html_table, unsafe_allow_html=True)
+            
+            # Download button
+            st.markdown("---")
+            csv = df_show.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📥 Download CSV (Chỉ dữ liệu đang hiển thị)",
+                data=csv,
+                file_name=f"task_dashboard_filtered_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+            )
     
-    # === TAB 3: Hình ảnh ===
+    # === TAB 3: Hình ảnh (CHỈ dữ liệu đã filter) ===
     with tab3:
         st.subheader("Thư viện hình ảnh Task")
         
-        # Filter tasks có hình ảnh
+        # Filter tasks có hình ảnh từ df_filtered
         df_with_images = df_filtered[df_filtered["PICTURE_BASE64"] != ""].copy()
         
         if len(df_with_images) > 0:
-            st.info(f"Tìm thấy {len(df_with_images)} task có hình ảnh")
+            st.info(f"📸 Tìm thấy {len(df_with_images)} task có hình ảnh (trong {len(df_filtered)} tasks đang hiển thị)")
             
             # Hiển thị grid hình ảnh
             cols_per_row = 3
@@ -377,13 +391,14 @@ if uploaded_file is not None:
                             
                             st.markdown("---")
         else:
-            st.warning("Không có task nào có hình ảnh trong bộ lọc hiện tại")
+            st.warning("⚠️ Không có task nào có hình ảnh trong bộ lọc hiện tại")
     
     # === Footer ===
     st.markdown("---")
     st.markdown(
         f"<div style='text-align: center; color: gray; padding: 10px;'>"
-        f"Dashboard cập nhật lần cuối: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        f"Dashboard cập nhật lần cuối: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | "
+        f"Đang hiển thị: {len(df_filtered)}/{len(df)} tasks"
         f"</div>",
         unsafe_allow_html=True
     )
