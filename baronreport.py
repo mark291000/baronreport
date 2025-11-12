@@ -309,6 +309,9 @@ if uploaded_file is not None:
                 
                 df_full = pd.DataFrame(full_data)
                 
+                # Tính max count để set margin phù hợp
+                max_count = df_full["count"].max()
+                
                 fig_bar = go.Figure()
                 colors = {
                     "Completed": "green",
@@ -332,10 +335,20 @@ if uploaded_file is not None:
                 fig_bar.update_layout(
                     barmode='group',
                     xaxis=dict(tickformat="%Y-%m", type='category'),
+                    yaxis=dict(
+                        range=[0, max_count * 1.15]  # Thêm 15% khoảng trống phía trên
+                    ),
                     hovermode='x unified',
                     height=400,
                     showlegend=True,
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                    legend=dict(
+                        orientation="h", 
+                        yanchor="bottom", 
+                        y=1.1,  # Đẩy legend cao hơn
+                        xanchor="right", 
+                        x=1
+                    ),
+                    margin=dict(t=80, b=40, l=40, r=40)  # Tăng margin trên để chứa legend
                 )
                 st.plotly_chart(fig_bar, use_container_width=True)
             else:
