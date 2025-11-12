@@ -547,7 +547,7 @@ if st.session_state.data_loaded:
     
     # Footer
     st.markdown("---")
-    footer_text = f"🔄 Dashboard cập nhật: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    footer_text = f"🔄 Mark Dang - Dashboard cập nhật: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     if st.session_state.upload_time:
         footer_text += f" | 📁 Dữ liệu: {st.session_state.uploaded_filename} ({st.session_state.upload_time.strftime('%Y-%m-%d %H:%M:%S')})"
     
@@ -557,4 +557,5 @@ if st.session_state.data_loaded:
         f"</div>",
         unsafe_allow_html=True
     )
+
 
