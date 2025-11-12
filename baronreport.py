@@ -1,16 +1,16 @@
 import streamlit as st
 import pandas as pd
 import openpyxl
+from openpyxl.worksheet.filters import AutoFilter
 import base64
 from datetime import datetime
 import plotly.graph_objects as go
 import plotly.express as px
 
 # =========================================================
-# TASK DASHBOARD - STREAMLIT VERSION
+# TASK DASHBOARD - STREAMLIT VERSION (Chỉ đọc dòng visible)
 # =========================================================
 
-# === Cấu hình trang ===
 st.set_page_config(
     page_title="Task Dashboard",
     page_icon="📋",
@@ -18,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# === CSS tùy chỉnh ===
+# === CSS tùy chỉnh (giữ nguyên) ===
 st.markdown("""
 <style>
     .main {
@@ -62,29 +62,68 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# === Hàm xử lý dữ liệu ===
+# === HÀM MỚI: Lấy các dòng visible từ Excel ===
+def get_visible_rows(ws, header_row=3):
+    """
+    Lấy danh sách các dòng KHÔNG BỊ ẨN trong Excel
+    
+    Args:
+        ws: Worksheet từ openpyxl
+        header_row: Dòng header (default=3)
+    
+    Returns:
+        List các số dòng visible (bắt đầu từ header_row + 1)
+    """
+    visible_rows = []
+    
+    # Kiểm tra từng dòng xem có bị ẩn không
+    for row_idx in range(header_row + 1, ws.max_row + 1):
+        row_dimension = ws.row_dimensions[row_idx]
+        
+        # Nếu dòng không bị ẩn (hidden=False hoặc không có thuộc tính hidden)
+        if not row_dimension.hidden:
+            visible_rows.append(row_idx)
+    
+    return visible_rows
+
+# === HÀM CẢI TIẾN: Load chỉ dữ liệu visible ===
 @st.cache_data
 def load_and_process_data(uploaded_file):
-    """Load và xử lý dữ liệu từ Excel file"""
+    """Load và xử lý CHỈ dữ liệu VISIBLE từ Excel file"""
     today = pd.Timestamp.now().normalize()
     
-    # Đọc Excel với openpyxl để lấy hình ảnh
+    # Đọc Excel với openpyxl
     wb = openpyxl.load_workbook(uploaded_file, data_only=True)
     ws = wb.active
     
-    # Lưu hình ảnh (cột PICTURE)
+    # === BƯỚC 1: Lấy danh sách các dòng visible ===
+    visible_row_numbers = get_visible_rows(ws, header_row=3)
+    
+    st.info(f"🔍 Phát hiện {len(visible_row_numbers)} dòng visible trong Excel (trên tổng {ws.max_row - 3} dòng dữ liệu)")
+    
+    # === BƯỚC 2: Lưu hình ảnh (chỉ từ các dòng visible) ===
     images = {}
     for image in ws._images:
         cell = image.anchor._from
-        cell_coord = f"{openpyxl.utils.get_column_letter(cell.col + 1)}{cell.row + 1}"
-        img_bytes = image.ref.getvalue() if hasattr(image.ref, 'getvalue') else image.ref
-        images[cell_coord] = base64.b64encode(img_bytes).decode('utf-8')
+        row_num = cell.row + 1
+        
+        # Chỉ lưu hình ảnh từ dòng visible
+        if row_num in visible_row_numbers:
+            cell_coord = f"{openpyxl.utils.get_column_letter(cell.col + 1)}{row_num}"
+            img_bytes = image.ref.getvalue() if hasattr(image.ref, 'getvalue') else image.ref
+            images[cell_coord] = base64.b64encode(img_bytes).decode('utf-8')
     
-    # Đọc Excel với pandas (header dòng 3)
-    df = pd.read_excel(uploaded_file, header=2, engine='openpyxl')
-    df.columns = df.columns.str.strip()
+    # === BƯỚC 3: Đọc toàn bộ Excel với pandas ===
+    df_full = pd.read_excel(uploaded_file, header=2, engine='openpyxl')
+    df_full.columns = df_full.columns.str.strip()
     
-    # Xử lý Status
+    # === BƯỚC 4: Lọc CHỈ GIỮ các dòng visible ===
+    # visible_row_numbers bắt đầu từ 4 (dòng 4 trong Excel = index 0 trong DataFrame)
+    visible_indices = [row_num - 4 for row_num in visible_row_numbers]
+    df = df_full.iloc[visible_indices].copy()
+    df.reset_index(drop=True, inplace=True)
+    
+    # === BƯỚC 5: Xử lý Status (giữ nguyên) ===
     def get_status(row):
         confirm = str(row.get("CONFIRM FROM BARON", "")).strip().lower()
         start_date = row.get("START DATE")
@@ -117,21 +156,21 @@ def load_and_process_data(uploaded_file):
     df["START DATE"] = pd.to_datetime(df["START DATE"], errors="coerce")
     df["DUE DATE"] = pd.to_datetime(df["DUE DATE"], errors="coerce")
     
-    # Thêm cột PICTURE_BASE64 từ images dict
+    # === BƯỚC 6: Thêm cột PICTURE_BASE64 ===
     df["PICTURE_BASE64"] = ""
-    for idx, row in df.iterrows():
-        row_num = idx + 4  # Bắt đầu từ dòng 4 trong Excel
-        # Tìm cột PICTURE
-        header_row = [cell.value for cell in ws[3]]
-        try:
-            picture_col_idx = header_row.index("PICTURE")
-            cell_coord = f"{openpyxl.utils.get_column_letter(picture_col_idx + 1)}{row_num}"
+    header_row = [cell.value for cell in ws[3]]
+    try:
+        picture_col_idx = header_row.index("PICTURE")
+        
+        for idx, row in df.iterrows():
+            original_row_num = visible_row_numbers[idx]
+            cell_coord = f"{openpyxl.utils.get_column_letter(picture_col_idx + 1)}{original_row_num}"
             if cell_coord in images:
                 df.at[idx, "PICTURE_BASE64"] = images[cell_coord]
-        except:
-            pass
+    except:
+        pass
     
-    return df, images, ws
+    return df, images, ws, len(visible_row_numbers), ws.max_row - 3
 
 def create_status_badge(status):
     """Tạo badge HTML cho status"""
@@ -163,10 +202,18 @@ with st.sidebar:
         
         # Load dữ liệu
         try:
-            df, images, ws = load_and_process_data(uploaded_file)
+            df, images, ws, visible_count, total_count = load_and_process_data(uploaded_file)
+            
+            # Hiển thị thông tin về filter
+            st.markdown("---")
+            st.subheader("📊 Thông tin Excel")
+            st.info(f"**Tổng dòng trong file:** {total_count}\n\n**Dòng visible (đã load):** {visible_count}")
+            
+            if visible_count < total_count:
+                st.warning(f"⚠️ File Excel có filter! Chỉ đọc {visible_count}/{total_count} dòng visible")
             
             st.markdown("---")
-            st.subheader("🔍 Lọc dữ liệu")
+            st.subheader("🔍 Lọc dữ liệu bổ sung")
             
             # Filter theo STATUS
             status_filter = st.multiselect(
@@ -184,12 +231,14 @@ with st.sidebar:
             
         except Exception as e:
             st.error(f"❌ Lỗi khi đọc file: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
             st.stop()
     else:
         st.info("👆 Vui lòng upload file Excel để bắt đầu")
         st.stop()
 
-# === Main content ===
+# === Main content (GIỮ NGUYÊN PHẦN NÀY) ===
 if uploaded_file is not None:
     
     # Áp dụng filter
@@ -206,7 +255,7 @@ if uploaded_file is not None:
                 (df_filtered["START DATE"] <= pd.Timestamp(end_date))
             ]
     
-    # === Hiển thị thống kê CHỈ cho dữ liệu đã filter ===
+    # === Hiển thị thống kê ===
     with st.sidebar:
         st.markdown("---")
         st.subheader("📊 Thống kê (Đang hiển thị)")
@@ -220,7 +269,6 @@ if uploaded_file is not None:
             st.metric("Completed", len(df_filtered[df_filtered["STATUS"] == "Completed"]))
             st.metric("Delay", len(df_filtered[df_filtered["STATUS"] == "Delay"]))
         
-        # Thêm thống kê chi tiết
         st.markdown("**Phân bố STATUS:**")
         for status in ["Completed", "Working", "New Task", "Delay"]:
             count = len(df_filtered[df_filtered["STATUS"] == status])
@@ -230,7 +278,7 @@ if uploaded_file is not None:
     # === Tab layout ===
     tab1, tab2, tab3 = st.tabs(["📊 Biểu đồ", "📋 Bảng dữ liệu", "🖼️ Hình ảnh"])
     
-    # === TAB 1: Biểu đồ (CHỈ dữ liệu đã filter) ===
+    # TAB 1: Biểu đồ
     with tab1:
         col1, col2 = st.columns(2)
         
@@ -263,7 +311,6 @@ if uploaded_file is not None:
                 df_with_dates["month"] = df_with_dates["START DATE"].dt.strftime("%Y-%m")
                 df_summary = df_with_dates.groupby(["month", "STATUS"]).size().reset_index(name="count")
                 
-                # Tạo DataFrame đầy đủ
                 all_months = sorted(df_summary["month"].unique())
                 all_statuses = ["Completed", "Working", "New Task", "Delay"]
                 
@@ -278,7 +325,6 @@ if uploaded_file is not None:
                 
                 df_full = pd.DataFrame(full_data)
                 
-                # Tạo bar chart
                 fig_bar = go.Figure()
                 colors = {
                     "Completed": "green",
@@ -311,24 +357,21 @@ if uploaded_file is not None:
             else:
                 st.info("Không có dữ liệu ngày tháng để hiển thị")
     
-    # === TAB 2: Bảng dữ liệu (CHỈ dữ liệu đã filter) ===
+    # TAB 2: Bảng dữ liệu
     with tab2:
         st.subheader(f"Danh sách Task ({len(df_filtered)} tasks đang hiển thị)")
         
         if len(df_filtered) == 0:
             st.warning("⚠️ Không có task nào khớp với bộ lọc hiện tại")
         else:
-            # Tạo DataFrame hiển thị
             df_display = df_filtered.copy()
             df_display["START DATE"] = df_display["START DATE"].dt.strftime("%m/%d/%Y")
             df_display["DUE DATE"] = df_display["DUE DATE"].dt.strftime("%m/%d/%Y")
             df_display = df_display.fillna("")
             
-            # Chọn các cột hiển thị
             display_cols = ["TASK", "Requester", "START DATE", "DUE DATE", "CONFIRM FROM BARON", "STATUS"]
             df_show = df_display[display_cols].copy()
             
-            # Tạo HTML table với status có màu
             html_table = "<table style='width:100%; border-collapse: collapse;'>"
             html_table += "<thead><tr style='background-color: #4CAF50; color: white;'>"
             for col in display_cols:
@@ -349,7 +392,6 @@ if uploaded_file is not None:
             html_table += "</tbody></table>"
             st.markdown(html_table, unsafe_allow_html=True)
             
-            # Download button
             st.markdown("---")
             csv = df_show.to_csv(index=False).encode('utf-8-sig')
             st.download_button(
@@ -359,17 +401,15 @@ if uploaded_file is not None:
                 mime="text/csv",
             )
     
-    # === TAB 3: Hình ảnh (CHỈ dữ liệu đã filter) ===
+    # TAB 3: Hình ảnh
     with tab3:
         st.subheader("Thư viện hình ảnh Task")
         
-        # Filter tasks có hình ảnh từ df_filtered
         df_with_images = df_filtered[df_filtered["PICTURE_BASE64"] != ""].copy()
         
         if len(df_with_images) > 0:
             st.info(f"📸 Tìm thấy {len(df_with_images)} task có hình ảnh (trong {len(df_filtered)} tasks đang hiển thị)")
             
-            # Hiển thị grid hình ảnh
             cols_per_row = 3
             rows = (len(df_with_images) + cols_per_row - 1) // cols_per_row
             
@@ -383,7 +423,6 @@ if uploaded_file is not None:
                             st.markdown(f"**{task_row['TASK']}**")
                             st.markdown(f"*Status: {create_status_badge(task_row['STATUS'])}*", unsafe_allow_html=True)
                             
-                            # Hiển thị hình ảnh
                             img_data = task_row["PICTURE_BASE64"]
                             if img_data:
                                 img_html = f'<img src="data:image/png;base64,{img_data}" style="width:100%; border-radius:8px; border:1px solid #ddd;"/>'
@@ -393,12 +432,12 @@ if uploaded_file is not None:
         else:
             st.warning("⚠️ Không có task nào có hình ảnh trong bộ lọc hiện tại")
     
-    # === Footer ===
+    # Footer
     st.markdown("---")
     st.markdown(
         f"<div style='text-align: center; color: gray; padding: 10px;'>"
         f"Dashboard cập nhật lần cuối: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | "
-        f"Đang hiển thị: {len(df_filtered)}/{len(df)} tasks"
+        f"Đang hiển thị: {len(df_filtered)} tasks từ {visible_count} dòng visible trong Excel"
         f"</div>",
         unsafe_allow_html=True
     )
